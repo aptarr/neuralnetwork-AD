@@ -50,17 +50,18 @@ def load_mean_stdev(port):
 try:
     seed = 66
     numpy.random.seed(seed)
-    ports = {'20': 3, '21': 4, '22': 5, '23': 6, '25': 7, '53': 8, '80': 9, '110': 10, '139': 11, '443': 12, '445': 13}
+    ports = {'20': 3, '21': 4, '22': 5, '23': 6, '25': 7, '53': 8, '80': 9, '110': 10, '139': 11, '143': 12, '443': 13,
+             '445': 14}
     port_str = sys.argv[2]
     port = ports[sys.argv[2]]
 
     if sys.argv[1] == "training":
-        dataset = pandas.read_csv("~/Documents/Dataset/ISCX12/without retransmission/csv/11jun.csv", delimiter=",", skiprows=0)
+        dataset = pandas.read_csv("~/Documents/Dataset/ISCX12/without retransmission/csv-bytefreq/14jun.csv", delimiter=",", skiprows=0)
         dataset = dataset.as_matrix()
         dataset = dataset[dataset[:,port] == 1,:]
-        dataset[:, 14] = dataset[:, 14].astype("float32") / 1500
+        dataset[:, 15] = dataset[:, 15].astype("float32") / 1500
 
-        X_train = dataset[:, 14:]
+        X_train = dataset[:, 15:]
         Y_train = dataset[:, 0]
 
         input_dimension = 257
@@ -92,13 +93,13 @@ try:
         save_mean_stdev(port_str, mean, stdev)
         print mean, stdev
     elif sys.argv[1] == "testing":
-        dataset2 = pandas.read_csv("~/Documents/Dataset/ISCX12/without retransmission/csv/13jun.csv", delimiter=",",
+        dataset2 = pandas.read_csv("~/Documents/Dataset/ISCX12/without retransmission/csv-bytefreq/13jun.csv", delimiter=",",
                                    skiprows=0)
         dataset2 = dataset2.as_matrix()
         dataset2 = dataset2[dataset2[:, port] == 1, :]
-        dataset2[:, 14] = dataset2[:, 14].astype("float32") / 1500
+        dataset2[:, 15] = dataset2[:, 15].astype("float32") / 1500
 
-        X_test = dataset2[:, 14:]
+        X_test = dataset2[:, 15:]
         Y_test = dataset2[:, 0]
 
         autoencoder = load_model("autoencoder", port_str)
@@ -132,12 +133,13 @@ try:
             elif result[i] == 0 and Y_test[i] == 1:
                 fn = fn + 1
 
-        tpr = float(tp) / (tp + fn) * 100
-        fpr = float(fp) / (fp + tn) * 100
-        tnr = float(tn) / (tn + fp) * 100
-        fnr = float(fn) / (tp + fn) * 100
+        tpr = float(tp) / (tp + fn + 0.0001) * 100
+        fpr = float(fp) / (fp + tn + 0.0001) * 100
+        tnr = float(tn) / (tn + fp + 0.0001) * 100
+        fnr = float(fn) / (tp + fn + 0.0001) * 100
 
         print tpr, fpr, tnr, fnr, tp, fp, tn, fn
 
-except IndexError:
-    print("Usage: python autoencoder.py <training|testing>")
+except IndexError as e:
+    print(e)
+    print("Usage: python autoencoder.py <training|testing> <port>")
