@@ -7,7 +7,7 @@ import sys
 
 
 def count(mse, mean, stdev):
-    if mse > (float(mean) + 2 * float(stdev)):
+    if mse > (float(mean) + 1 * float(stdev)):
         return 1
     else:
         return 0
