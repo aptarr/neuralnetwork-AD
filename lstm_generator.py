@@ -10,11 +10,11 @@ from keras.callbacks import ModelCheckpoint
 from keras.utils import np_utils
 
 seq_length = 5
-filename = "models/lstm-80-49-0.7064.hdf5"
+filename = "models/lstm-10.hdf5"
 model = load_model(filename)
 model.compile(loss="categorical_crossentropy", optimizer="adam")
 
-start = [ord(c) for c in "get i"]
+start = [ord(c) for c in "get / http"]
 pattern = start
 
 for i in range(200):

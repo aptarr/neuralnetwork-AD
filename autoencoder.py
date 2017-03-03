@@ -1,5 +1,5 @@
 from keras.models import Model
-from keras.layers import Dense, Input
+from keras.layers import Dense, Input, Dropout
 from keras.models import model_from_json
 import numpy
 import pandas
@@ -7,7 +7,7 @@ import sys
 
 
 def count(mse, mean, stdev):
-    if mse > (float(mean) + 1 * float(stdev)):
+    if mse > (float(mean) + 2 * float(stdev)):
         return 1
     else:
         return 0
@@ -16,31 +16,31 @@ def count(mse, mean, stdev):
 def save_model(filename, model, port):
     model_json = model.to_json()
 
-    with open(filename + port + ".json", "w") as json_file:
+    with open("models/" + filename + port + ".json", "w") as json_file:
         json_file.write(model_json)
 
-    model.save_weights(filename + port + ".h5")
+    model.save_weights("models/" + filename + port + ".h5")
     print("Saved {} to disk".format(filename))
 
 
 def save_mean_stdev(port, mean, stdev):
-    fmean = open("mean" + port + ".txt", "w")
+    fmean = open("models/" + "mean" + port + ".txt", "w")
     fmean.write("{},{}".format(mean, stdev))
     fmean.close()
 
 
 def load_model(filename, port):
-    json_file = open(filename + port + ".json", "r")
+    json_file = open("models/" + filename + port + ".json", "r")
     loaded_model_json = json_file.read()
     json_file.close()
     loaded_model = model_from_json(loaded_model_json)
-    loaded_model.load_weights(filename + port + ".h5")
+    loaded_model.load_weights("models/" + filename + port + ".h5")
     print("Loaded {} to disk".format(filename))
     return loaded_model
 
 
 def load_mean_stdev(port):
-    fmean = open("mean" + port + ".txt", "r")
+    fmean = open("models/" + "mean" + port + ".txt", "r")
     line = fmean.readline()
     split = line.split(",")
     fmean.close()
@@ -65,27 +65,33 @@ try:
         Y_train = dataset[:, 0]
 
         input_dimension = 257
-        hidden_dimension = 100
+        hidden_dimension = [200, 100]
         input = Input(shape=(input_dimension,))
-        encoded = Dense(hidden_dimension, activation="relu") (input)
-        decoded = Dense(input_dimension, activation="sigmoid") (encoded)
+        encoded = Dense(hidden_dimension[0], activation="relu") (input)
+        encoded = Dropout(0.2) (encoded)
+        encoded = Dense(hidden_dimension[1], activation="relu") (encoded)
+        encoded = Dropout(0.2) (encoded)
+        decoded = Dense(hidden_dimension[0], activation="relu")(encoded)
+        decoded = Dropout(0.2) (decoded)
+        decoded = Dense(input_dimension, activation="sigmoid") (decoded)
         autoencoder = Model(input=input, output=decoded)
-        encoder = Model(input=input, output=encoded)
-        encoded_input = Input(shape=(hidden_dimension,))
-        decoder_layer = autoencoder.layers[-1]
-        decoder = Model(input=encoded_input, output=decoder_layer(encoded_input))
+        #encoder = Model(input=input, output=encoded)
+        #encoded_input = Input(shape=(hidden_dimension,))
+        #decoder_layer = autoencoder.layers[-1]
+        #decoder = Model(input=encoded_input, output=decoder_layer(encoded_input))
 
         autoencoder.compile(loss="binary_crossentropy", optimizer="adadelta")
 
-        autoencoder.fit(X_train, X_train, batch_size=100, nb_epoch=10, shuffle=True)
+        autoencoder.fit(X_train, X_train, batch_size=100, nb_epoch=20, shuffle=True)
 
         save_model("autoencoder", autoencoder, port_str)
-        save_model("encoder", encoder, port_str)
-        save_model("decoder", decoder, port_str)
+        #save_model("encoder", encoder, port_str)
+        #save_model("decoder", decoder, port_str)
 
         print("Counting mean and stddev...")
-        encoded_packets = encoder.predict(X_train)
-        decoded_packets = decoder.predict(encoded_packets)
+        #encoded_packets = encoder.predict(X_train)
+        #decoded_packets = decoder.predict(encoded_packets)
+        decoded_packets = autoencoder.predict(X_train)
 
         test = numpy.sqrt(numpy.mean((decoded_packets - X_train) ** 2, axis=1))
         mean = numpy.mean(test)
@@ -103,11 +109,12 @@ try:
         Y_test = dataset2[:, 0]
 
         autoencoder = load_model("autoencoder", port_str)
-        encoder = load_model("encoder", port_str)
-        decoder = load_model("decoder", port_str)
+        #encoder = load_model("encoder", port_str)
+        #decoder = load_model("decoder", port_str)
 
-        encoded_packets = encoder.predict(X_test)
-        decoded_packets = decoder.predict(encoded_packets)
+        #encoded_packets = encoder.predict(X_test)
+        #decoded_packets = decoder.predict(encoded_packets)
+        decoded_packets = autoencoder.predict(X_test)
 
         test = numpy.sqrt(numpy.mean((decoded_packets-X_test)**2, axis=1))
         mean, stdev = load_mean_stdev(port_str)
@@ -116,7 +123,7 @@ try:
         print test
         print mean, stdev
         all = numpy.c_[test, result, Y_test]
-        numpy.savetxt("result-{}.csv".format(port), all, delimiter=",")
+        numpy.savetxt("results/result-{}.csv".format(port), all, delimiter=",")
 
         tp = 0
         fp = 0
