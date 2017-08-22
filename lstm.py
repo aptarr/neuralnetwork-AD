@@ -17,7 +17,7 @@ data_input = {20: [], 21: [], 22: [], 23: [], 25: [], 53: [], 80: [], 110: [], 1
 counter = {20: 0, 21: 0, 22: 0, 23: 0, 25: 0, 53: 0, 80: 0, 110: 0, 139: 0, 143: 0, 443: 0, 445: 0}
 dataX = []
 dataY = []
-is_counting = True
+is_counting = False
 
 def main(argv):
     try:
@@ -28,8 +28,8 @@ def main(argv):
             model.add(Dropout(0.3))
             model.add(LSTM(256, return_sequences=True))
             model.add(Dropout(0.3))
-            model.add(LSTM(256, return_sequences=True))
-            model.add(Dropout(0.3))
+            #model.add(LSTM(256, return_sequences=True))
+            #model.add(Dropout(0.3))
             model.add(LSTM(256))
             model.add(Dropout(0.3))
             model.add(Dense(256, activation="softmax"))
@@ -39,11 +39,12 @@ def main(argv):
             #checkpoint = ModelCheckpoint(filepath, monitor="loss", verbose=1, save_best_only=True)
             #callback_list = [checkpoint]
             print "Training model...\nSequence length : {}".format(seq_length)
-            model.fit_generator(yield_read_dataset(argv[1], seq_length, int(argv[3])), samples_per_epoch=5000, nb_epoch=10, verbose=1)
+            model.fit_generator(yield_read_dataset(argv[1], seq_length, int(argv[3])), samples_per_epoch=3000, nb_epoch=20, verbose=1)
 
             #model.fit(dataX, dataY, nb_epoch=50, batch_size=128, callbacks=callback_list)
             # model.train_on_batch(dataX, dataY)
             model.save("models/lstm-{}.hdf5".format(seq_length), overwrite=True)
+            print "Saved"
             # counter[d_port] = 0
             # del data_input[d_port]
             # data_input[d_port] = []
@@ -58,7 +59,8 @@ def main(argv):
 
 
 def yield_read_dataset(filename, seq_length, port):
-    dataset_dir = "/home/baskoro/Documents/Dataset/ISCX12/without retransmission/"
+    #dataset_dir = "/home/baskoro/Documents/Dataset/ISCX12/without retransmission/"
+    dataset_dir = "/home/baskoro/Documents/Dataset/Irene/"
     print(dataset_dir + filename)
     cap = pcapy.open_offline(dataset_dir + filename)
     #for i in range(5000):
@@ -99,7 +101,8 @@ def yield_read_dataset(filename, seq_length, port):
 
 
 def read_dataset(filename, seq_length, port):
-    dataset_dir = "/home/baskoro/Documents/Dataset/ISCX12/without retransmission/"
+    # dataset_dir = "/home/baskoro/Documents/Dataset/ISCX12/without retransmission/"
+    dataset_dir = "/home/baskoro/Documents/Dataset/Irene/"
     print(dataset_dir + filename)
     cap = pcapy.open_offline(dataset_dir + filename)
     #for i in range(5000):
@@ -161,7 +164,7 @@ def parse_packet(header, packet, port, seq_length):
         if d_length <= seq_length:
             return
 
-        if d_port != port:
+        if (d_port != port) and (s_port != port):
             return
 
         payload = str(transporthdr.get_data_as_string()).lower()

@@ -14,7 +14,8 @@ from impacket import ImpactDecoder, ImpactPacket
 
 
 seq_length = 20
-threshold = (0.209352331307 + 2 * 0.154211673538)
+#threshold = (0.209352331307 + 2 * 0.154211673538)
+threshold = (0.956164171306 + 2 * 0.0913063407667)
 
 def main(argv):
     try:
@@ -25,14 +26,15 @@ def main(argv):
 
 
 def init_model():
-    filename = "models/lstm.hdf5"
+    filename = "models/lstm-20.hdf5"
     model = load_model(filename)
     model.compile(loss="categorical_crossentropy", optimizer="adam")
     return model
 
 
 def read_dataset(filename, port, model):
-    dataset_dir = "/home/baskoro/Documents/Dataset/ISCX12/without retransmission/"
+    # dataset_dir = "/home/baskoro/Documents/Dataset/ISCX12/without retransmission/"
+    dataset_dir = "/home/baskoro/Documents/Dataset/Irene/"
     cap = pcapy.open_offline(dataset_dir + filename)
     anomaly_scores = []
     detection_decisions = []
@@ -60,9 +62,9 @@ def read_dataset(filename, port, model):
 
     #print packets
     #print detection_decisions
-    #mean = numpy.mean(anomaly_scores)
-    #stdev = numpy.std(anomaly_scores)
-    #print mean, stdev
+    mean = numpy.mean(anomaly_scores)
+    stdev = numpy.std(anomaly_scores)
+    print mean, stdev
     #numpy.savetxt("results/result-lstm-{}.csv".format(port), packets, delimiter=",")
     fresult.close()
 
@@ -100,7 +102,7 @@ def parse_packet(header, packet, port, fresult):
         if d_length <= seq_length:
             return None
 
-        if d_port != port:
+        if (d_port != port) and (s_port != port):
             return None
 
         fresult.write("{}, {}, {}, {}, {}, {}, {},".format(s_addr, s_port, d_addr, d_port, protocol, seq_num, d_length))
