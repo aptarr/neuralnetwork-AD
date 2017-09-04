@@ -63,11 +63,17 @@ def main(argv):
             raise IndexError("Dropout must be numeric.")
 
         read_conf()
-        rnnids(phase, sys.argv[8], protocol, port, type, hidden_layers, seq_length, dropout)
+
+        if phase == "testing":
+            rnnids(phase, sys.argv[8], protocol, port, type, hidden_layers, seq_length, dropout, sys.argv[9])
+        else:
+            rnnids(phase, sys.argv[8], protocol, port, type, hidden_layers, seq_length, dropout)
+
+
 
     except IndexError as e:
         print(e)
-        print("Usage: python rnnids.py <training|predicting|testing> <rnn|lstm|gru> <tcp|udp> <port> <hidden_layers> <seq_length> <dropout> <filename>")
+        print("Usage: python rnnids.py <training|predicting|testing> <rnn|lstm|gru> <tcp|udp> <port> <hidden_layers> <seq_length> <dropout> <training filename> [testing filename]")
     except KeyboardInterrupt:
         if prt is not None:
             prt.done = True
@@ -97,11 +103,13 @@ def read_conf():
     fconf.close()
 
 
-def rnnids(phase = "training", filename = "", protocol="tcp", port="80", type = "rnn", hidden_layers = 2, seq_length = 3, dropout = 0.0):
+def rnnids(phase = "training", filename = "", protocol="tcp", port="80", type = "rnn", hidden_layers = 2, seq_length = 3, dropout = 0.0, testing_filename = ""):
     if phase == "training":
+        numpy.random.seed(666)
         rnn_model = init_model(type, hidden_layers, seq_length, dropout)
 
         rnn_model.fit_generator(byte_seq_generator(filename, protocol, port, seq_length), steps_per_epoch=100000, epochs=10, verbose=1)
+        check_directory(filename, "models")
         rnn_model.save("models/{}/{}-{}-hl{}-seq{}-do{}.hdf5".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), overwrite=True)
         print "Training model finished. Calculating prediction errors..."
 
@@ -109,12 +117,12 @@ def rnnids(phase = "training", filename = "", protocol="tcp", port="80", type = 
         print "Finished"
         done = True
     elif phase == "predicting":
-        rnn_model = load_rnn_model(type, hidden_layers, seq_length, dropout, protocol, port)
+        rnn_model = load_rnn_model(type, hidden_layers, seq_length, dropout, protocol, port, filename)
         predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden_layers, seq_length, dropout, phase)
         done = True
     elif phase == "testing":
-        rnn_model = load_rnn_model(type, hidden_layers, seq_length, dropout, protocol, port)
-        predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden_layers, seq_length, dropout, phase)
+        rnn_model = load_rnn_model(type, hidden_layers, seq_length, dropout, protocol, port, filename)
+        predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden_layers, seq_length, dropout, phase, testing_filename)
         done = True
 
 
@@ -144,7 +152,7 @@ def init_model(type, hidden_layers, seq_length, dropout):
 
 
 def load_rnn_model(type, hidden_layers, seq_length, dropout, protocol, port, filename):
-    rnn_model = load_model("models/{}/{}-{}-hl{}-seq{}-do{}.hdf5".format(filename/ type, protocol+port, hidden_layers, seq_length, dropout))
+    rnn_model = load_model("models/{}/{}-{}-hl{}-seq{}-do{}.hdf5".format(filename, type, protocol+port, hidden_layers, seq_length, dropout))
     return rnn_model
 
 
@@ -194,12 +202,15 @@ def byte_seq_generator(filename, protocol, port, seq_length):
         prt.reset_read_status()
 
 
-def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden_layers, seq_length, dropout, phase="training"):
+def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden_layers, seq_length, dropout, phase="training", testing_filename = ""):
     global prt
     global threshold_method
 
     if prt is None:
-        prt = PcapReaderThread(root_directory + filename, protocol, port)
+        if phase == "testing":
+            prt = PcapReaderThread(root_directory + testing_filename, protocol, port)
+        else:
+            prt = PcapReaderThread(root_directory + filename, protocol, port)
         prt.start()
     else:
         prt.reset_read_status()
@@ -212,7 +223,7 @@ def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden
     if phase == "testing":
         t1, t2 = load_threshold(type, hidden_layers, seq_length, dropout, protocol, port, threshold_method, filename)
         check_directory(filename, "results")
-        fresult = open("results/{}/result-{}-{}-hl{}-seq{}-do{}-{}.csv".format(filename, type, protocol+port, hidden_layers, seq_length, dropout, filename), "w")
+        fresult = open("results/{}/result-{}-{}-hl{}-seq{}-do{}-{}.csv".format(filename, type, protocol+port, hidden_layers, seq_length, dropout, testing_filename), "w")
         if not fresult:
             raise Exception("Could not create file")
 
@@ -226,7 +237,7 @@ def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden
                 continue
 
             payload_length = buffered_packet.get_payload_length()
-            if payload_length == 0:
+            if payload_length <= seq_length:
                 continue
 
             payload = [ord(c) for c in buffered_packet.get_payload()]
@@ -345,7 +356,7 @@ def decide(mse, threshold_method, t1, t2):
 
 
 def check_directory(filename, root = "models"):
-    if not os.isdir("./{}/{}".format(root, filename)):
+    if not os.path.isdir("./{}/{}".format(root, filename)):
         os.mkdir("./{}/{}".format(root, filename))
 
 
