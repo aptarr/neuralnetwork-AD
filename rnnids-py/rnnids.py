@@ -157,16 +157,31 @@ def load_rnn_model(type, hidden_layers, seq_length, dropout, protocol, port, fil
 
 
 def load_threshold(type, hidden_layers, seq_length, dropout, protocol, port, threshold_model, filename):
-    if threshold_model == "mean":
-        fmean = open("models/{}/mean-{}-{}-hl{}-seq{}-do{}.txt".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), "r")
-    elif threshold_model == "median":
-        fmean = open("models/{}/median-{}-{}-hl{}-seq{}-do{}.txt".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), "r")
-    elif threshold_model == "zscore":
-        fmean = open("models/{}/mad-{}-{}-hl{}-seq{}-do{}.txt".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), "r")
+    t1 = []
+    t2 = []
+
+    fmean = open("models/{}/mean-{}-{}-hl{}-seq{}-do{}.txt".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), "r")
     line = fmean.readline()
     split = line.split(",")
+    t1.append(split[0])
+    t2.append(split[1])
     fmean.close()
-    return split[0], split[1]
+
+    fmean = open("models/{}/median-{}-{}-hl{}-seq{}-do{}.txt".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), "r")
+    line = fmean.readline()
+    split = line.split(",")
+    t1.append(split[0])
+    t2.append(split[1])
+    fmean.close()
+
+    fmean = open("models/{}/zscore-{}-{}-hl{}-seq{}-do{}.txt".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), "r")
+    line = fmean.readline()
+    split = line.split(",")
+    t1.append(split[0])
+    t2.append(split[1])
+    fmean.close()
+
+    return t1, t2
 
 
 def byte_seq_generator(filename, protocol, port, seq_length):
@@ -227,7 +242,7 @@ def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden
         if not fresult:
             raise Exception("Could not create file")
 
-    # for i in range(0,10):
+    # for i in range(0,100):
     while not prt.done or prt.has_ready_message():
         if not prt.has_ready_message():
             time.sleep(0.0001)
@@ -278,7 +293,7 @@ def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden
                 errors_list.append(prediction_error)
             elif phase == "testing":
                 decision = decide(prediction_error, threshold_method, t1, t2)
-                fresult.write("{},{},{}\n".format(buffered_packet.id, prediction_error, decision))
+                fresult.write("{},{},{},{},{}\n".format(buffered_packet.id, prediction_error, decision[0], decision[1], decision[2]))
 
             counter += 1
             # for i in range(0,seq_length):
@@ -292,14 +307,11 @@ def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden
 
     errors_list = numpy.reshape(errors_list, (1, len(errors_list)))
     if phase == "training" or phase == "predicting":
-        if threshold_method == "mean":
-            save_mean_stdev(type, protocol, port, hidden_layers, seq_length, dropout, errors_list, filename)
-        elif threshold_method == "median":
-            save_q3_iqr(type, protocol, port, hidden_layers, seq_length, dropout, errors_list, filename)
-        elif threshold_method == "zscore":
-            save_median_mad(type, protocol, port, hidden_layers, seq_length, dropout, errors_list, filename)
+        save_mean_stdev(type, protocol, port, hidden_layers, seq_length, dropout, errors_list, filename)
+        save_q3_iqr(type, protocol, port, hidden_layers, seq_length, dropout, errors_list, filename)
+        save_median_mad(type, protocol, port, hidden_layers, seq_length, dropout, errors_list, filename)
     elif phase == "testing":
-         fresult.close()
+        fresult.close()
 
 
 def save_mean_stdev(type, protocol, port, hidden_layers, seq_length, dropout, errors_list, filename):
@@ -331,28 +343,31 @@ def save_median_mad(type, protocol, port, hidden_layers, seq_length, dropout, er
     median = numpy.median(errors_list)
     mad = numpy.median([numpy.abs(error - median) for error in errors_list])
     check_directory(filename, "models")
-    fmean = open("models/{}/mad-{}-{}-hl{}-seq{}-do{}.txt".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), "w")
+    fmean = open("models/{}/zscore-{}-{}-hl{}-seq{}-do{}.txt".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), "w")
     fmean.write("{},{}".format(median, mad))
     fmean.close()
 
 
 def decide(mse, threshold_method, t1, t2):
-    if threshold_method == "mean":
-        if mse > (float(t1) + 2 * float(t2)):
-            return 1
-        else:
-            return 0
-    elif threshold_method == "median":
-        if mse > (float(t1) + float(t2)):
-            return 1
-        else:
-            return 0
-    elif threshold_method == "zscore":
-        zscore = 0.6745 * (mse - float(t1)) / float(t2)
-        if zscore > 3.5:
-            return 1
-        else:
-            return 0
+    decision = []
+
+    if mse > (float(t1[0]) + 2 * float(t2[0])):
+        decision.append(1)
+    else:
+        decision.append(0)
+
+    if mse > (float(t1[1]) + float(t2[1])):
+        decision.append(1)
+    else:
+        decision.append(0)
+
+    zscore = 0.6745 * (mse - float(t1[2])) / float(t2[2])
+    if zscore > 3.5 or zscore < -3.5:
+        decision.append(1)
+    else:
+        decision.append(0)
+
+    return decision
 
 
 def check_directory(filename, root = "models"):
