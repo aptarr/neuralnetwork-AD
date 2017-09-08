@@ -17,8 +17,7 @@ from tensorflow import Tensor
 
 done=False
 prt=None
-root_directory = ""
-threshold_method = ""
+conf = {}
 
 
 def main(argv):
@@ -89,6 +88,7 @@ def read_conf():
         print "File rnnids.conf does not exist."
         exit(-1)
 
+    conf["root_directory"] = []
     lines = fconf.readlines()
     for line in lines:
         if line.startswith("#"):
@@ -96,9 +96,7 @@ def read_conf():
         split = line.split("=", 2)
         print split
         if split[0] == "root_directory":
-            root_directory = split[1].strip()
-        elif split[0] == "threshold_method":
-            threshold_method = split[1].strip()
+            conf["root_directory"].append(split[1].strip())
 
     fconf.close()
 
@@ -108,7 +106,7 @@ def rnnids(phase = "training", filename = "", protocol="tcp", port="80", type = 
         numpy.random.seed(666)
         rnn_model = init_model(type, hidden_layers, seq_length, dropout)
 
-        rnn_model.fit_generator(byte_seq_generator(filename, protocol, port, seq_length), steps_per_epoch=100000, epochs=10, verbose=1)
+        rnn_model.fit_generator(byte_seq_generator(filename, protocol, port, seq_length), steps_per_epoch=12000, epochs=10, verbose=1)
         check_directory(filename, "models")
         rnn_model.save("models/{}/{}-{}-hl{}-seq{}-do{}.hdf5".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), overwrite=True)
         print "Training model finished. Calculating prediction errors..."
@@ -156,29 +154,29 @@ def load_rnn_model(type, hidden_layers, seq_length, dropout, protocol, port, fil
     return rnn_model
 
 
-def load_threshold(type, hidden_layers, seq_length, dropout, protocol, port, threshold_model, filename):
+def load_threshold(type, hidden_layers, seq_length, dropout, protocol, port, filename):
     t1 = []
     t2 = []
 
     fmean = open("models/{}/mean-{}-{}-hl{}-seq{}-do{}.txt".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), "r")
-    line = fmean.readline()
-    split = line.split(",")
-    t1.append(split[0])
-    t2.append(split[1])
+    for line in fmean.readlines():
+        split = line.split(",")
+        t1.append(float(split[0]))
+        t2.append(float(split[1]))
     fmean.close()
 
     fmean = open("models/{}/median-{}-{}-hl{}-seq{}-do{}.txt".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), "r")
-    line = fmean.readline()
-    split = line.split(",")
-    t1.append(split[0])
-    t2.append(split[1])
+    for line in fmean.readlines():
+        split = line.split(",")
+        t1.append(float(split[0]))
+        t2.append(float(split[1]))
     fmean.close()
 
     fmean = open("models/{}/zscore-{}-{}-hl{}-seq{}-do{}.txt".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), "r")
-    line = fmean.readline()
-    split = line.split(",")
-    t1.append(split[0])
-    t2.append(split[1])
+    for line in fmean.readlines():
+        split = line.split(",")
+        t1.append(float(split[0]))
+        t2.append(float(split[1]))
     fmean.close()
 
     return t1, t2
@@ -188,8 +186,7 @@ def byte_seq_generator(filename, protocol, port, seq_length):
     global prt
     global root_directory
 
-    print root_directory + filename
-    prt = PcapReaderThread(root_directory + filename, protocol, port)
+    prt = PcapReaderThread(get_pcap_file_fullpath(filename), protocol, port)
     prt.start()
 
     while not done:
@@ -219,24 +216,23 @@ def byte_seq_generator(filename, protocol, port, seq_length):
 
 def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden_layers, seq_length, dropout, phase="training", testing_filename = ""):
     global prt
-    global threshold_method
 
     if prt is None:
         if phase == "testing":
-            prt = PcapReaderThread(root_directory + testing_filename, protocol, port)
+            prt = PcapReaderThread(get_pcap_file_fullpath(testing_filename), protocol, port)
         else:
-            prt = PcapReaderThread(root_directory + filename, protocol, port)
+            prt = PcapReaderThread(get_pcap_file_fullpath(filename), protocol, port)
         prt.start()
     else:
         prt.reset_read_status()
         prt.delete_read_connections = True
 
-    errors_list = []
+    errors_list = [[],[]]
     counter = 0
     print "predict"
 
     if phase == "testing":
-        t1, t2 = load_threshold(type, hidden_layers, seq_length, dropout, protocol, port, threshold_method, filename)
+        t1, t2 = load_threshold(type, hidden_layers, seq_length, dropout, protocol, port, filename)
         check_directory(filename, "results")
         fresult = open("results/{}/result-{}-{}-hl{}-seq{}-do{}-{}.csv".format(filename, type, protocol+port, hidden_layers, seq_length, dropout, testing_filename), "w")
         if not fresult:
@@ -282,18 +278,24 @@ def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden
                     prediction = rnn_model.predict_on_batch(x_batch[i:i+350])
                     predicted_y = numpy.r_[predicted_y, (numpy.argmax(prediction, axis=1))]
 
-            anomaly_score = 0
+            binary_anomaly_score = 0
+            floating_anomaly_score = 0
 
             for i in range(0, len(y_batch)):
                 if y_batch[i] != predicted_y[i]:
-                    anomaly_score += 1
+                    binary_anomaly_score += 1
+                floating_anomaly_score += (y_batch[i] - predicted_y[i]) ** 2
 
-            prediction_error = float(anomaly_score) / float(payload_length)
+            binary_prediction_error = float(binary_anomaly_score) / float(payload_length)
+            floating_prediction_error = floating_anomaly_score / float(len(y_batch))
+
             if phase == "training" or phase == "predicting":
-                errors_list.append(prediction_error)
+                errors_list[0].append(binary_prediction_error)
+                errors_list[1].append(floating_prediction_error)
             elif phase == "testing":
-                decision = decide(prediction_error, threshold_method, t1, t2)
-                fresult.write("{},{},{},{},{}\n".format(buffered_packet.id, prediction_error, decision[0], decision[1], decision[2]))
+                decision = decide([binary_prediction_error, floating_prediction_error], t1, t2)
+                fresult.write("{},{},{},{},{},{},{},{},{}\n".format(buffered_packet.id, binary_prediction_error, decision[0], decision[1], decision[2],
+                                                                    floating_prediction_error, decision[3], decision[4], decision[5]))
 
             counter += 1
             # for i in range(0,seq_length):
@@ -305,7 +307,7 @@ def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden
             # sys.stdout.write("\rCalculated {} connections.".format(counter))
             # sys.stdout.flush()
 
-    errors_list = numpy.reshape(errors_list, (1, len(errors_list)))
+    errors_list = numpy.reshape(errors_list, (2, len(errors_list[0])))
     if phase == "training" or phase == "predicting":
         save_mean_stdev(type, protocol, port, hidden_layers, seq_length, dropout, errors_list, filename)
         save_q3_iqr(type, protocol, port, hidden_layers, seq_length, dropout, errors_list, filename)
@@ -315,16 +317,19 @@ def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden
 
 
 def save_mean_stdev(type, protocol, port, hidden_layers, seq_length, dropout, errors_list, filename):
-    mean = numpy.mean(errors_list)
-    stdev = numpy.std(errors_list)
+    mean = numpy.mean(errors_list[0])
+    stdev = numpy.std(errors_list[0])
     check_directory(filename, "models")
     fmean = open("models/{}/mean-{}-{}-hl{}-seq{}-do{}.txt".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), "w")
+    fmean.write("{},{}\n".format(mean, stdev))
+    mean = numpy.mean(errors_list[1])
+    stdev = numpy.std(errors_list[1])
     fmean.write("{},{}".format(mean, stdev))
     fmean.close()
 
 
 def save_q3_iqr(type, protocol, port, hidden_layers, seq_length, dropout, errors_list, filename):
-    qs = numpy.percentile(errors_list, [100, 75, 50, 25, 0])
+    qs = numpy.percentile(errors_list[0], [100, 75, 50, 25, 0])
     iqr = qs[1] - qs[3]
     MC = ((qs[0]-qs[2])-(qs[2]-qs[4]))/(qs[0]-qs[4])
     if MC >= 0:
@@ -332,9 +337,18 @@ def save_q3_iqr(type, protocol, port, hidden_layers, seq_length, dropout, errors
     else:
         constant = 4
     iqrplusMC = 1.5 * math.pow(math.e, constant * MC) * iqr
-    print "IQR: {}\nMC: {}\nConstant: {}".format(iqr, MC, constant)
     check_directory(filename, "models")
     fmean = open("models/{}/median-{}-{}-hl{}-seq{}-do{}.txt".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), "w")
+    fmean.write("{},{}\n".format(qs[2], iqrplusMC))
+
+    qs = numpy.percentile(errors_list[1], [100, 75, 50, 25, 0])
+    iqr = qs[1] - qs[3]
+    MC = ((qs[0] - qs[2]) - (qs[2] - qs[4])) / (qs[0] - qs[4])
+    if MC >= 0:
+        constant = 3
+    else:
+        constant = 4
+    iqrplusMC = 1.5 * math.pow(math.e, constant * MC) * iqr
     fmean.write("{},{}".format(qs[2], iqrplusMC))
     fmean.close()
 
@@ -344,28 +358,36 @@ def save_median_mad(type, protocol, port, hidden_layers, seq_length, dropout, er
     mad = numpy.median([numpy.abs(error - median) for error in errors_list])
     check_directory(filename, "models")
     fmean = open("models/{}/zscore-{}-{}-hl{}-seq{}-do{}.txt".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), "w")
+    fmean.write("{},{}\n".format(median, mad))
+
+    median = numpy.median(errors_list)
+    mad = numpy.median([numpy.abs(error - median) for error in errors_list])
     fmean.write("{},{}".format(median, mad))
     fmean.close()
 
 
-def decide(mse, threshold_method, t1, t2):
+def decide(mse, t1, t2):
     decision = []
 
-    if mse > (float(t1[0]) + 2 * float(t2[0])):
-        decision.append(1)
-    else:
-        decision.append(0)
+    for i in range(0, 2):
+        # mean threshold
+        if mse[i] > (float(t1[i]) + 2 * float(t2[i])):
+            decision.append(1)
+        else:
+            decision.append(0)
 
-    if mse > (float(t1[1]) + float(t2[1])):
-        decision.append(1)
-    else:
-        decision.append(0)
+        # skewed median threshold
+        if mse[i] > (float(t1[i+2]) + float(t2[i+2])):
+            decision.append(1)
+        else:
+            decision.append(0)
 
-    zscore = 0.6745 * (mse - float(t1[2])) / float(t2[2])
-    if zscore > 3.5 or zscore < -3.5:
-        decision.append(1)
-    else:
-        decision.append(0)
+        # zscore threshold
+        zscore = 0.6745 * (mse[i] - float(t1[i+4]) / float(t2[i+4]))
+        if zscore > 3.5 or zscore < -3.5:
+            decision.append(1)
+        else:
+            decision.append(0)
 
     return decision
 
@@ -373,6 +395,13 @@ def decide(mse, threshold_method, t1, t2):
 def check_directory(filename, root = "models"):
     if not os.path.isdir("./{}/{}".format(root, filename)):
         os.mkdir("./{}/{}".format(root, filename))
+
+
+def get_pcap_file_fullpath(filename):
+    global conf
+    for i in range(0, len(conf["root_directory"])):
+        if os.path.isfile(conf["root_directory"][i] + filename):
+            return conf["root_directory"][i] + filename
 
 
 if __name__ == '__main__':
