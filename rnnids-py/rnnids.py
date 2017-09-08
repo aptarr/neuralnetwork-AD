@@ -106,7 +106,7 @@ def rnnids(phase = "training", filename = "", protocol="tcp", port="80", type = 
         numpy.random.seed(666)
         rnn_model = init_model(type, hidden_layers, seq_length, dropout)
 
-        rnn_model.fit_generator(byte_seq_generator(filename, protocol, port, seq_length), steps_per_epoch=12000, epochs=10, verbose=1)
+        rnn_model.fit_generator(byte_seq_generator(filename, protocol, port, seq_length), steps_per_epoch=1000, epochs=1, verbose=1)
         check_directory(filename, "models")
         rnn_model.save("models/{}/{}-{}-hl{}-seq{}-do{}.hdf5".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), overwrite=True)
         print "Training model finished. Calculating prediction errors..."
@@ -209,7 +209,23 @@ def byte_seq_generator(filename, protocol, port, seq_length):
                         X = X / float(255)
                         Y = np_utils.to_categorical(seq_out, num_classes=256)
 
-                        yield X, Y
+                        if i == 0 or i % 350 == 1:
+                            dataX = X
+                            dataY = Y
+                        else:
+                            dataX = numpy.r_["0,2", dataX, X]
+                            dataY = numpy.r_["0,2", dataY, Y]
+
+                        if i % 350 == 0:
+                            #print dataX
+                            yield dataX, dataY
+                        #sys.stdout.write("\rCalculated {}/{} sequences.".format(i, len(payload) - seq_length - 1))
+                        #sys.stdout.flush()
+                        #yield X, Y
+
+                    #print dataX
+                    #print dataY
+                    yield dataX, dataY
 
         prt.reset_read_status()
 
