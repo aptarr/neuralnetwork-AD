@@ -245,7 +245,7 @@ def byte_seq_generator(filename, protocol, port, seq_length, batch_size):
 
                     yield dataX, dataY
 
-        print "Total sequences: {}".format(counter)
+        # print "Total sequences: {}".format(counter)
         prt.reset_read_status()
 
 
