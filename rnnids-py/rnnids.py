@@ -26,7 +26,7 @@ def main(argv):
 
     try:
         # validate command line arguments
-        if sys.argv[1] != "training" and sys.argv[1] != "predicting" and sys.argv[1] != "testing":
+        if sys.argv[1] != "training" and sys.argv[1] != "predicting" and sys.argv[1] != "testing" and sys.argv[1] != "counting":
             raise IndexError("Phase {} does not exist.".format(sys.argv[1]))
         else:
             phase = sys.argv[1]
@@ -61,10 +61,19 @@ def main(argv):
         except ValueError:
             raise IndexError("Dropout must be numeric.")
 
+        if phase == "training" and not sys.argv[9].isdigit():
+            raise IndexError("Batch size must be numeric.")
+        elif phase == "training":
+            batch_size = int(sys.argv[9])
+
         read_conf()
 
         if phase == "testing":
-            rnnids(phase, sys.argv[8], protocol, port, type, hidden_layers, seq_length, dropout, sys.argv[9])
+            rnnids(phase, sys.argv[8], protocol, port, type, hidden_layers, seq_length, dropout, testing_filename=sys.argv[9])
+        elif phase == "training":
+            rnnids(phase, sys.argv[8], protocol, port, type, hidden_layers, seq_length, dropout, batch_size=batch_size)
+        elif phase == "counting":
+            count_byte_seq_generator(sys.argv[8], protocol, port, seq_length)
         else:
             rnnids(phase, sys.argv[8], protocol, port, type, hidden_layers, seq_length, dropout)
 
@@ -72,7 +81,7 @@ def main(argv):
 
     except IndexError as e:
         print(e)
-        print("Usage: python rnnids.py <training|predicting|testing> <rnn|lstm|gru> <tcp|udp> <port> <hidden_layers> <seq_length> <dropout> <training filename> [testing filename]")
+        print("Usage: python rnnids.py <training|predicting|testing> <rnn|lstm|gru> <tcp|udp> <port> <hidden_layers> <seq_length> <dropout> <training filename> [training batch size] [testing filename]")
     except KeyboardInterrupt:
         if prt is not None:
             prt.done = True
@@ -89,6 +98,7 @@ def read_conf():
         exit(-1)
 
     conf["root_directory"] = []
+    conf["training_filename"] = {"default": 100000}
     lines = fconf.readlines()
     for line in lines:
         if line.startswith("#"):
@@ -97,16 +107,28 @@ def read_conf():
         print split
         if split[0] == "root_directory":
             conf["root_directory"].append(split[1].strip())
+        elif split[0] == "training_filename":
+            tmp = split[1].split(":")
+            conf["training_filename"][tmp[0]] = int(tmp[1])
 
     fconf.close()
 
 
-def rnnids(phase = "training", filename = "", protocol="tcp", port="80", type = "rnn", hidden_layers = 2, seq_length = 3, dropout = 0.0, testing_filename = ""):
+def rnnids(phase = "training", filename = "", protocol="tcp", port="80", type = "rnn", hidden_layers = 2, seq_length = 3, dropout = 0.0, testing_filename = "", batch_size = 1):
+    global done
+
     if phase == "training":
         numpy.random.seed(666)
         rnn_model = init_model(type, hidden_layers, seq_length, dropout)
 
-        rnn_model.fit_generator(byte_seq_generator(filename, protocol, port, seq_length), steps_per_epoch=1000, epochs=1, verbose=1)
+        if filename in conf["training_filename"]:
+            steps_per_epoch = conf["training_filename"][filename] / batch_size
+        else:
+            steps_per_epoch = conf["training_filename"]["default"] / batch_size
+
+        print("Steps per epoch: {}".format(steps_per_epoch))
+
+        rnn_model.fit_generator(byte_seq_generator(filename, protocol, port, seq_length, batch_size), steps_per_epoch=steps_per_epoch, epochs=10, verbose=1)
         check_directory(filename, "models")
         rnn_model.save("models/{}/{}-{}-hl{}-seq{}-do{}.hdf5".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), overwrite=True)
         print "Training model finished. Calculating prediction errors..."
@@ -182,12 +204,13 @@ def load_threshold(type, hidden_layers, seq_length, dropout, protocol, port, fil
     return t1, t2
 
 
-def byte_seq_generator(filename, protocol, port, seq_length):
+def byte_seq_generator(filename, protocol, port, seq_length, batch_size):
     global prt
     global root_directory
 
     prt = PcapReaderThread(get_pcap_file_fullpath(filename), protocol, port)
     prt.start()
+    counter = 0
 
     while not done:
         while not prt.done or prt.has_ready_message():
@@ -209,24 +232,20 @@ def byte_seq_generator(filename, protocol, port, seq_length):
                         X = X / float(255)
                         Y = np_utils.to_categorical(seq_out, num_classes=256)
 
-                        if i == 0 or i % 350 == 1:
+                        if i == 0 or i % batch_size == 1:
                             dataX = X
                             dataY = Y
                         else:
                             dataX = numpy.r_["0,2", dataX, X]
                             dataY = numpy.r_["0,2", dataY, Y]
 
-                        if i % 350 == 0:
-                            #print dataX
+                        counter += 1
+                        if i % batch_size == 0:
                             yield dataX, dataY
-                        #sys.stdout.write("\rCalculated {}/{} sequences.".format(i, len(payload) - seq_length - 1))
-                        #sys.stdout.flush()
-                        #yield X, Y
 
-                    #print dataX
-                    #print dataY
                     yield dataX, dataY
 
+        print "Total sequences: {}".format(counter)
         prt.reset_read_status()
 
 
@@ -330,6 +349,34 @@ def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden
         save_median_mad(type, protocol, port, hidden_layers, seq_length, dropout, errors_list, filename)
     elif phase == "testing":
         fresult.close()
+
+
+def count_byte_seq_generator(filename, protocol, port, seq_length):
+    global prt
+    global root_directory
+
+    prt = PcapReaderThread(get_pcap_file_fullpath(filename), protocol, port)
+    prt.start()
+    prt.delete_read_connections = True
+    counter = 0
+
+    while not prt.done or prt.has_ready_message():
+        if not prt.has_ready_message():
+            time.sleep(0.0001)
+            continue
+        else:
+            buffered_packet = prt.pop_connection()
+            if buffered_packet is None:
+                time.sleep(0.0001)
+                continue
+
+            payload_length = buffered_packet.get_payload_length()
+            if payload_length > 0:
+                counter += (payload_length - seq_length)
+                sys.stdout.write("\r{} sequences.".format(counter))
+                sys.stdout.flush()
+
+    print "Total sequences: {}".format(counter)
 
 
 def save_mean_stdev(type, protocol, port, hidden_layers, seq_length, dropout, errors_list, filename):
