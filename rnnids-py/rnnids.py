@@ -13,6 +13,7 @@ from keras.layers import Dense, Input, Dropout, LSTM, GRU, SimpleRNN
 from keras.models import model_from_json
 from keras.utils import np_utils
 from PcapReaderThread import PcapReaderThread
+from StreamReaderThread import StreamReaderThread
 from tensorflow import Tensor
 
 done=False
@@ -28,60 +29,79 @@ def main(argv):
         # validate command line arguments
         if sys.argv[1] != "training" and sys.argv[1] != "predicting" and sys.argv[1] != "testing" and sys.argv[1] != "counting":
             raise IndexError("Phase {} does not exist.".format(sys.argv[1]))
+        elif sys.argv[1] == "counting":
+            if sys.argv[2] != "tcp" and sys.argv[2] != "udp":
+                raise IndexError("Protocol {} is not supported.".format(sys.argv[3]))
+            else:
+                protocol = sys.argv[2]
+
+            if not sys.argv[3].isdigit():
+                raise IndexError("Port must be numeric.")
+            else:
+                port = sys.argv[3]
+
+            if not sys.argv[4].isdigit():
+                raise IndexError("Sequence length must be numeric.")
+            else:
+                seq_length = int(sys.argv[4])
+
+            read_conf()
+            count_byte_seq_generator(sys.argv[5], protocol, port, seq_length)
         else:
             phase = sys.argv[1]
 
-        if sys.argv[2] != "rnn" and sys.argv[2] != "lstm" and sys.argv[2] != "gru":
-            raise IndexError("Type {} does not exist.".format(sys.argv[2]))
-        else:
-            type = sys.argv[2]
+            if sys.argv[2] != "rnn" and sys.argv[2] != "lstm" and sys.argv[2] != "gru":
+                raise IndexError("Type {} does not exist.".format(sys.argv[2]))
+            else:
+                type = sys.argv[2]
 
-        if sys.argv[3] != "tcp" and sys.argv[3] != "udp":
-            raise IndexError("Protocol {} is not supported.".format(sys.argv[3]))
-        else:
-            protocol = sys.argv[3]
+            if sys.argv[3] != "tcp" and sys.argv[3] != "udp":
+                raise IndexError("Protocol {} is not supported.".format(sys.argv[3]))
+            else:
+                protocol = sys.argv[3]
 
-        if not sys.argv[4].isdigit():
-            raise IndexError("Port must be numeric.")
-        else:
-            port = sys.argv[4]
+            if not sys.argv[4].isdigit():
+                raise IndexError("Port must be numeric.")
+            else:
+                port = sys.argv[4]
 
-        if not sys.argv[5].isdigit():
-            raise IndexError("Number of hidden layers must be numeric.")
-        else:
-            hidden_layers = int(sys.argv[5])
+            if not sys.argv[5].isdigit():
+                raise IndexError("Number of hidden layers must be numeric.")
+            else:
+                hidden_layers = int(sys.argv[5])
 
-        if not sys.argv[6].isdigit():
-            raise IndexError("Sequence length must be numeric.")
-        else:
-            seq_length = int(sys.argv[6])
+            if not sys.argv[6].isdigit():
+                raise IndexError("Sequence length must be numeric.")
+            else:
+                seq_length = int(sys.argv[6])
 
-        try:
-            dropout = float(sys.argv[7])
-        except ValueError:
-            raise IndexError("Dropout must be numeric.")
+            try:
+                dropout = float(sys.argv[7])
+            except ValueError:
+                raise IndexError("Dropout must be numeric.")
 
-        if phase == "training" and not sys.argv[9].isdigit():
-            raise IndexError("Batch size must be numeric.")
-        elif phase == "training":
-            batch_size = int(sys.argv[9])
+            if phase == "training" and not sys.argv[9].isdigit():
+                raise IndexError("Batch size must be numeric.")
+            elif phase == "training":
+                batch_size = int(sys.argv[9])
 
-        read_conf()
+            read_conf()
 
-        if phase == "testing":
-            rnnids(phase, sys.argv[8], protocol, port, type, hidden_layers, seq_length, dropout, testing_filename=sys.argv[9])
-        elif phase == "training":
-            rnnids(phase, sys.argv[8], protocol, port, type, hidden_layers, seq_length, dropout, batch_size=batch_size)
-        elif phase == "counting":
-            count_byte_seq_generator(sys.argv[8], protocol, port, seq_length)
-        else:
-            rnnids(phase, sys.argv[8], protocol, port, type, hidden_layers, seq_length, dropout)
+            if phase == "testing":
+                rnnids(phase, sys.argv[8], protocol, port, type, hidden_layers, seq_length, dropout, testing_filename=sys.argv[9])
+            elif phase == "training":
+                rnnids(phase, sys.argv[8], protocol, port, type, hidden_layers, seq_length, dropout, batch_size=batch_size)
+            else:
+                rnnids(phase, sys.argv[8], protocol, port, type, hidden_layers, seq_length, dropout)
 
 
 
     except IndexError as e:
         print(e)
-        print("Usage: python rnnids.py <training|predicting|testing> <rnn|lstm|gru> <tcp|udp> <port> <hidden_layers> <seq_length> <dropout> <training filename> [training batch size] [testing filename]")
+        print("Usage: python rnnids.py <training|predicting|testing> <rnn|lstm|gru> <tcp|udp> <port> <hidden_layers> "
+              "<seq_length> <dropout> <training filename> [training batch size] [testing filename]\n"
+              "or \n"
+              "python rnnids.py counting <tcp|udp> <port> <seq_length> <training_filename>")
     except KeyboardInterrupt:
         if prt is not None:
             prt.done = True
@@ -98,7 +118,7 @@ def read_conf():
         exit(-1)
 
     conf["root_directory"] = []
-    conf["training_filename"] = {"default": 100000}
+    conf["training_filename"] = {"default-80-5": 100000}
     lines = fconf.readlines()
     for line in lines:
         if line.startswith("#"):
@@ -109,7 +129,7 @@ def read_conf():
             conf["root_directory"].append(split[1].strip())
         elif split[0] == "training_filename":
             tmp = split[1].split(":")
-            conf["training_filename"][tmp[0]] = int(tmp[1])
+            conf["training_filename"]["{}-{}-{}".format(tmp[0], tmp[1], tmp[2])] = int(tmp[3])
 
     fconf.close()
 
@@ -121,10 +141,10 @@ def rnnids(phase = "training", filename = "", protocol="tcp", port="80", type = 
         numpy.random.seed(666)
         rnn_model = init_model(type, hidden_layers, seq_length, dropout)
 
-        if filename in conf["training_filename"]:
-            steps_per_epoch = conf["training_filename"][filename] / batch_size
+        if "{}-{}-{}".format(filename, port, seq_length) in conf["training_filename"]:
+            steps_per_epoch = conf["training_filename"]["{}-{}-{}".format(filename, port, seq_length)] / batch_size
         else:
-            steps_per_epoch = conf["training_filename"]["default"] / batch_size
+            steps_per_epoch = conf["training_filename"]["default-80-5"] / batch_size
 
         print("Steps per epoch: {}".format(steps_per_epoch))
 
@@ -208,7 +228,7 @@ def byte_seq_generator(filename, protocol, port, seq_length, batch_size):
     global prt
     global root_directory
 
-    prt = PcapReaderThread(get_pcap_file_fullpath(filename), protocol, port)
+    prt = StreamReaderThread(get_pcap_file_fullpath(filename), protocol, port)
     prt.start()
     counter = 0
 
@@ -222,8 +242,9 @@ def byte_seq_generator(filename, protocol, port, seq_length, batch_size):
                 if buffered_packet is None:
                     time.sleep(0.0001)
                     continue
-                if buffered_packet.get_payload_length() > 0:
-                    payload = [ord(c) for c in buffered_packet.get_payload()]
+                if buffered_packet.get_payload_length("server") > 0:
+                    payload = [ord(c) for c in buffered_packet.get_payload("server")]
+                    payload.insert(0, -1)  # mark as beginning of payloads
 
                     for i in range(0, len(payload) - seq_length, 1):
                         seq_in = payload[i:i + seq_length]
@@ -254,9 +275,9 @@ def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden
 
     if prt is None:
         if phase == "testing":
-            prt = PcapReaderThread(get_pcap_file_fullpath(testing_filename), protocol, port)
+            prt = StreamReaderThread(get_pcap_file_fullpath(testing_filename), protocol, port)
         else:
-            prt = PcapReaderThread(get_pcap_file_fullpath(filename), protocol, port)
+            prt = StreamReaderThread(get_pcap_file_fullpath(filename), protocol, port)
         prt.start()
     else:
         prt.reset_read_status()
@@ -282,11 +303,12 @@ def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden
             if buffered_packet is None:
                 continue
 
-            payload_length = buffered_packet.get_payload_length()
+            payload_length = buffered_packet.get_payload_length("server")
             if payload_length <= seq_length:
                 continue
 
-            payload = [ord(c) for c in buffered_packet.get_payload()]
+            payload = [ord(c) for c in buffered_packet.get_payload("server")]
+            payload.insert(0, -1) # mark as beginning of payloads
             x_batch = []
             y_batch = []
             for i in range(0, len(payload) - seq_length, 1):
@@ -355,28 +377,41 @@ def count_byte_seq_generator(filename, protocol, port, seq_length):
     global prt
     global root_directory
 
-    prt = PcapReaderThread(get_pcap_file_fullpath(filename), protocol, port)
+    prt = StreamReaderThread(get_pcap_file_fullpath(filename), protocol, port)
     prt.start()
     prt.delete_read_connections = True
     counter = 0
+    stream_counter = 0
 
     while not prt.done or prt.has_ready_message():
         if not prt.has_ready_message():
-            time.sleep(0.0001)
+            prt.wait_for_data()
             continue
         else:
             buffered_packet = prt.pop_connection()
             if buffered_packet is None:
-                time.sleep(0.0001)
+                prt.wait_for_data()
                 continue
 
-            payload_length = buffered_packet.get_payload_length()
+            payload_length = buffered_packet.get_payload_length("server")
+            # payload = buffered_packet.get_payload("server")
+            # payload = "#" + payload  # mark as beginning of payloads
+            # print(payload)
+            # x = 0
+            # for i in range(0, len(payload) - seq_length, 1):
+            #     seq_in = payload[i:i + seq_length]
+            #     seq_out = payload[i + seq_length]
+            #     print(seq_in)
+            #     print(seq_out)
+            #     x += 1
+
             if payload_length > 0:
-                counter += (payload_length - seq_length)
-                sys.stdout.write("\r{} sequences.".format(counter))
+                stream_counter += 1
+                counter += (payload_length - seq_length) + 1
+                sys.stdout.write("\r{} streams, {} sequences.".format(stream_counter, counter))
                 sys.stdout.flush()
 
-    print "Total sequences: {}".format(counter)
+    print "Total streams: {}. Total sequences: {}".format(stream_counter, counter)
 
 
 def save_mean_stdev(type, protocol, port, hidden_layers, seq_length, dropout, errors_list, filename):
