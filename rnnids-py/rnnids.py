@@ -235,12 +235,12 @@ def byte_seq_generator(filename, protocol, port, seq_length, batch_size):
     while not done:
         while not prt.done or prt.has_ready_message():
             if not prt.has_ready_message():
-                time.sleep(0.0001)
+                prt.wait_for_data()
                 continue
             else:
                 buffered_packet = prt.pop_connection()
                 if buffered_packet is None:
-                    time.sleep(0.0001)
+                    prt.wait_for_data()
                     continue
                 if buffered_packet.get_payload_length("server") > 0:
                     payload = [ord(c) for c in buffered_packet.get_payload("server")]
@@ -297,7 +297,7 @@ def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden
     # for i in range(0,100):
     while not prt.done or prt.has_ready_message():
         if not prt.has_ready_message():
-            time.sleep(0.0001)
+            prt.wait_for_data()
         else:
             buffered_packet = prt.pop_connection()
             if buffered_packet is None:
