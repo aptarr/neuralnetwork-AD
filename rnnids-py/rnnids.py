@@ -4,12 +4,13 @@ import numpy
 import os
 import sys
 import time
+import traceback
 sys.path.insert(0, '../aeids-py/')
 
 from keras.callbacks import TensorBoard
 from keras.models import load_model
 from keras.models import Model, Sequential
-from keras.layers import Dense, Input, Dropout, LSTM, GRU, SimpleRNN
+from keras.layers import Dense, Input, Dropout, LSTM, GRU, SimpleRNN, Embedding
 from keras.models import model_from_json
 from keras.utils import np_utils
 from PcapReaderThread import PcapReaderThread
@@ -98,6 +99,7 @@ def main(argv):
 
     except IndexError as e:
         print(e)
+	traceback.print_exc()
         print("Usage: python rnnids.py <training|predicting|testing> <rnn|lstm|gru> <tcp|udp> <port> <hidden_layers> "
               "<seq_length> <dropout> <training filename> [training batch size] [testing filename]\n"
               "or \n"
@@ -167,23 +169,26 @@ def rnnids(phase = "training", filename = "", protocol="tcp", port="80", type = 
 
 
 def init_model(type, hidden_layers, seq_length, dropout):
+    embed_len = 32
+    rnn_len = 32
     rnn_model = Sequential()
+    rnn_model.add(Embedding(256, embed_len, input_length=seq_length))
     for i in range(0, hidden_layers-1):
         if type == "rnn":
-            rnn_model.add(SimpleRNN(units=256, input_shape=(seq_length,1), return_sequences=True))
+            rnn_model.add(SimpleRNN(units=rnn_len, input_shape=(seq_length,embed_len), return_sequences=True))
         elif type == "lstm":
-            rnn_model.add(LSTM(units=256, input_shape=(seq_length, 1), return_sequences=True))
+            rnn_model.add(LSTM(units=rnn_len, input_shape=(seq_length, embed_len), return_sequences=True))
         elif type == "gru":
-            rnn_model.add(GRU(units=256, input_shape=(seq_length, 1), return_sequences=True))
+            rnn_model.add(GRU(units=rnn_len, input_shape=(seq_length, embed_len), return_sequences=True))
 
         rnn_model.add(Dropout(dropout))
 
     if type == "rnn":
-        rnn_model.add(SimpleRNN(units=256, input_shape=(seq_length, 1)))
+        rnn_model.add(SimpleRNN(units=rnn_len, input_shape=(seq_length, embed_len)))
     elif type == "lstm":
-        rnn_model.add(LSTM(units=256, input_shape=(seq_length, 1)))
+        rnn_model.add(LSTM(units=rnn_len, input_shape=(seq_length, embed_len)))
     elif type == "gru":
-        rnn_model.add(GRU(units=256, input_shape=(seq_length, 1)))
+        rnn_model.add(GRU(units=rnn_len, input_shape=(seq_length, embed_len)))
 
     rnn_model.add(Dense(256, activation="softmax"))
     rnn_model.compile(optimizer="adam", loss="categorical_crossentropy")
@@ -249,8 +254,9 @@ def byte_seq_generator(filename, protocol, port, seq_length, batch_size):
                     for i in range(0, len(payload) - seq_length, 1):
                         seq_in = payload[i:i + seq_length]
                         seq_out = payload[i + seq_length]
-                        X = numpy.reshape(seq_in, (1, seq_length, 1))
-                        X = X / float(255)
+                        #X = numpy.reshape(seq_in, (1, seq_length, 1))
+                        X = numpy.reshape(seq_in, (1, seq_length))
+                        #X = X / float(255)
                         Y = np_utils.to_categorical(seq_out, num_classes=256)
 
                         if i == 0 or i % batch_size == 1:
@@ -262,6 +268,7 @@ def byte_seq_generator(filename, protocol, port, seq_length, batch_size):
 
                         counter += 1
                         if i % batch_size == 0:
+                            #print(dataX, dataY)
                             yield dataX, dataY
 
                     yield dataX, dataY
@@ -314,8 +321,9 @@ def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden
             for i in range(0, len(payload) - seq_length, 1):
                 seq_in = payload[i:i + seq_length]
                 seq_out = payload[i + seq_length]
-                x = numpy.reshape(seq_in, (1, seq_length, 1))
-                x = x / float(255)
+                x = numpy.reshape(seq_in, (1, seq_length))
+                #x = numpy.reshape(seq_in, (1, seq_length, 1))
+                #x = x / float(255)
 
                 if len(x_batch) == 0:
                     x_batch = x
