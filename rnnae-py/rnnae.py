@@ -13,6 +13,7 @@ from keras.models import Model, Sequential
 from keras.layers import Dense, Input, Dropout, LSTM, GRU, SimpleRNN, Embedding, TimeDistributed
 from keras.models import model_from_json
 from keras.utils import np_utils
+from keras.preprocessing.sequence import pad_sequences
 from PcapReaderThread import PcapReaderThread
 from StreamReaderThread import StreamReaderThread
 from tensorflow import Tensor
@@ -172,11 +173,11 @@ def init_model(type, hidden_layers, seq_length, dropout):
 	rnn_model.add(Embedding(256, embed_len, input_length=seq_length))
 	for i in range(0, len(hidden_layers)):
 		if type == "rnn":
-			rnn_model.add(SimpleRNN(units=hidden_layers[i], input_shape=(seq_length,embed_len), return_sequences=True))
+			rnn_model.add(SimpleRNN(units=hidden_layers[i], input_shape=(None,embed_len), return_sequences=True))
 		elif type == "lstm":
-			rnn_model.add(LSTM(units=hidden_layers[i], input_shape=(seq_length, embed_len), return_sequences=True))
+			rnn_model.add(LSTM(units=hidden_layers[i], input_shape=(None, embed_len), return_sequences=True))
 		elif type == "gru":
-			rnn_model.add(GRU(units=hidden_layers[i], input_shape=(seq_length, embed_len), return_sequences=True))
+			rnn_model.add(GRU(units=hidden_layers[i], input_shape=(None, embed_len), return_sequences=True))
 
 		rnn_model.add(Dropout(dropout))
 
@@ -190,15 +191,15 @@ def init_model(type, hidden_layers, seq_length, dropout):
 
 	for i in range(len(hidden_layers)-1, -1, -1):
 		if type == "rnn":
-			rnn_model.add(SimpleRNN(units=hidden_layers[i], input_shape=(seq_length,embed_len), return_sequences=True))
+			rnn_model.add(SimpleRNN(units=hidden_layers[i], input_shape=(None,embed_len), return_sequences=True))
 		elif type == "lstm":
-			rnn_model.add(LSTM(units=hidden_layers[i], input_shape=(seq_length, embed_len), return_sequences=True))
+			rnn_model.add(LSTM(units=hidden_layers[i], input_shape=(None, embed_len), return_sequences=True))
 		elif type == "gru":
-			rnn_model.add(GRU(units=hidden_layers[i], input_shape=(seq_length, embed_len), return_sequences=True))
+			rnn_model.add(GRU(units=hidden_layers[i], input_shape=(None, embed_len), return_sequences=True))
 
 		rnn_model.add(Dropout(dropout))
 
-	rnn_model.add(TimeDistributed(Dense(256, activation="softmax"), input_shape=(seq_length, embed_len)))
+	rnn_model.add(TimeDistributed(Dense(256, activation="softmax"), input_shape=(None, embed_len)))
 	rnn_model.compile(optimizer="rmsprop", loss="categorical_crossentropy")
 	rnn_model.summary()
 
@@ -245,6 +246,7 @@ def byte_seq_generator(filename, protocol, port, seq_length, batch_size):
 	prt = StreamReaderThread(get_pcap_file_fullpath(filename), protocol, port)
 	prt.start()
 	counter = 0
+	longest_length = 0
 
 	while not done:
 		while not prt.done or prt.has_ready_message():
@@ -259,28 +261,28 @@ def byte_seq_generator(filename, protocol, port, seq_length, batch_size):
 				if buffered_packet.get_payload_length("server") > 0:
 					payload = [ord(c) for c in buffered_packet.get_payload("server")]
 					#payload.insert(0, -1)  # mark as beginning of payloads
+					
+					X = numpy.reshape(payload, (1, len(payload)))
+					Y = numpy.reshape(np_utils.to_categorical(payload, num_classes=256), (1, len(payload), 256))
 
-					for i in range(0, len(payload) - seq_length, 1):
-						seq_in = payload[i:i + seq_length]
-						seq_out = seq_in
-						#X = numpy.reshape(seq_in, (1, seq_length, 1))
-						X = numpy.reshape(seq_in, (1, seq_length))
-						#X = X / float(255)
-						Y = numpy.reshape(np_utils.to_categorical(seq_out, num_classes=256), (1, seq_length, 256))
-						if i == 0 or i % batch_size == 1:
-							dataX = X
-							dataY = Y
-						else:
-							dataX = numpy.r_["0,2", dataX, X]
-							dataY = numpy.r_["0,2", dataY, Y]
+					if len(payload) > longest_length:
+						longest_length = len(payload)
+					counter += 1
 
-						counter += 1
-						if i % batch_size == 0:
-							#print(dataX, dataY)
-							yield dataX, dataY
-
-					yield dataX, dataY
-
+					if counter % batch_size == 1:
+						dataX = X
+						dataY = Y
+					elif counter % batch_size == 0:
+						dataX = pad_sequences(dataX)
+						longest_length = 0
+						yield dataX, dataY
+					else:
+						#dataX = numpy.r_["0,2", dataX, X]
+						#dataY = numpy.r_["0,2", dataY, Y]
+						dataX.append(X)
+						dataY.append(Y)
+						
+					
 		# print "Total sequences: {}".format(counter)
 		prt.reset_read_status()
 
