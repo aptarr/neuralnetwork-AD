@@ -151,7 +151,7 @@ def rnnids(phase = "training", filename = "", protocol="tcp", port="80", type = 
 
         print("Steps per epoch: {}".format(steps_per_epoch))
 
-        rnn_model.fit_generator(byte_seq_generator(filename, protocol, port, seq_length, batch_size), steps_per_epoch=steps_per_epoch, epochs=10, verbose=1)
+        rnn_model.fit_generator(byte_seq_generator(filename, protocol, port, seq_length, batch_size), steps_per_epoch=steps_per_epoch, epochs=1, verbose=1)
         check_directory(filename, "models")
         rnn_model.save("models/{}/{}-{}-hl{}-seq{}-do{}.hdf5".format(filename, type, protocol+port, hidden_layers, seq_length, dropout), overwrite=True)
         print "Training model finished. Calculating prediction errors..."
@@ -193,6 +193,7 @@ def init_model(type, hidden_layers, seq_length, dropout):
 
     rnn_model.add(Dense(256, activation="softmax"))
     rnn_model.compile(optimizer="adam", loss="categorical_crossentropy")
+    rnn_model.summary()
 
     return rnn_model
 
@@ -248,7 +249,7 @@ def byte_seq_generator(filename, protocol, port, seq_length, batch_size):
                 if buffered_packet is None:
                     prt.wait_for_data()
                     continue
-                if buffered_packet.get_payload_length("server") > 0:
+                if buffered_packet.get_payload_length("server") > seq_length:
                     payload = [ord(c) for c in buffered_packet.get_payload("server")[:MAX_SEQ_LEN]]
                     #payload.insert(0, -1)  # mark as beginning of payloads
 
@@ -260,7 +261,7 @@ def byte_seq_generator(filename, protocol, port, seq_length, batch_size):
                         #X = X / float(255)
                         Y = np_utils.to_categorical(seq_out, num_classes=256)
 
-                        if i == 0 or i % batch_size == 1:
+                        if i == 0 or counter % batch_size == 1:
                             dataX = X
                             dataY = Y
                         else:
@@ -268,11 +269,13 @@ def byte_seq_generator(filename, protocol, port, seq_length, batch_size):
                             dataY = numpy.r_["0,2", dataY, Y]
 
                         counter += 1
-                        if i % batch_size == 0:
-                            #print(dataX, dataY)
+                        if dataX.shape[0] % batch_size == 0:
+                            #print(counter)
+                            #print(dataX.shape, dataY.shape)
                             yield dataX, dataY
+                            #pass
 
-                    yield dataX, dataY
+                    #yield dataX, dataY
 
         # print "Total sequences: {}".format(counter)
         prt.reset_read_status()
@@ -329,7 +332,7 @@ def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden
 
                 if len(x_batch) == 0:
                     x_batch = x
-                    y_batch = seq_out
+                    y_batch = [seq_out]
                 else:
                     x_batch = numpy.r_[x_batch, x]
                     y_batch = numpy.r_[y_batch, seq_out]
