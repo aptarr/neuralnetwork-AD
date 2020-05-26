@@ -20,6 +20,7 @@ from tensorflow import Tensor
 done=False
 prt=None
 conf = {}
+MAX_SEQ_LEN = 3960
 
 
 def main(argv):
@@ -248,8 +249,8 @@ def byte_seq_generator(filename, protocol, port, seq_length, batch_size):
                     prt.wait_for_data()
                     continue
                 if buffered_packet.get_payload_length("server") > 0:
-                    payload = [ord(c) for c in buffered_packet.get_payload("server")]
-                    payload.insert(0, -1)  # mark as beginning of payloads
+                    payload = [ord(c) for c in buffered_packet.get_payload("server")[:MAX_SEQ_LEN]]
+                    #payload.insert(0, -1)  # mark as beginning of payloads
 
                     for i in range(0, len(payload) - seq_length, 1):
                         seq_in = payload[i:i + seq_length]
@@ -314,8 +315,9 @@ def predict_byte_seq_generator(rnn_model, filename, protocol, port, type, hidden
             if payload_length <= seq_length:
                 continue
 
-            payload = [ord(c) for c in buffered_packet.get_payload("server")]
-            payload.insert(0, -1) # mark as beginning of payloads
+            payload = [ord(c) for c in buffered_packet.get_payload("server")[:MAX_SEQ_LEN]]
+            payload_length = len(payload)
+            #payload.insert(0, -1) # mark as beginning of payloads
             x_batch = []
             y_batch = []
             for i in range(0, len(payload) - seq_length, 1):
@@ -402,6 +404,8 @@ def count_byte_seq_generator(filename, protocol, port, seq_length):
                 continue
 
             payload_length = buffered_packet.get_payload_length("server")
+            if payload_length > MAX_SEQ_LEN:
+                payload_length = MAX_SEQ_LEN
             # payload = buffered_packet.get_payload("server")
             # payload = "#" + payload  # mark as beginning of payloads
             # print(payload)
